@@ -1,0 +1,7 @@
+{
+  "dependencies": {},
+  "globalDependencies": {
+    "langext": "github:fenying/langext.d.ts",
+    "node": "registry:dt/node#6.0.0+20160826120425"
+  }
+}

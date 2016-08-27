@@ -1,2 +1,3 @@
-# http-entity-parser
+# HTTP Entity Parser
+
 A paser for HTTP request entity.

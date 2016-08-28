@@ -1,6 +1,6 @@
 {
   "name": "http-entity-parser",
-  "version": "0.1.0-pre-2",
+  "version": "0.1.0-pre-3",
   "description": "A paser for HTTP request entity.",
   "main": "parser.js",
   "scripts": {

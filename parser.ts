@@ -5,6 +5,7 @@ import * as fs from "fs";
 import parseMultipartFormData = require("./parsers/multipart-form-data");
 import parseJSON = require("./parsers/application-json");
 import parseURLEncoded = require("./parsers/x-www-form-urlencoded");
+import parseRawBinary = require("./parsers/raw-binary");
 
 enum BEStatus {
     "IDLE" = 0,
@@ -28,13 +29,13 @@ export class EntityParser {
 
         "tempFileRoot": "./tmp/",
 
-        "maxFileSize": undefined,
-
-        "maxDataSize": undefined,
-
         "maxBufferSize": 1048576, // 1 MB
 
         "interruptOnExceed": true,
+
+        "disableTextJSON": false,
+
+        "disableRawBinary": false
     };
 
     public constructor(opts?:  HTTPEntityParser.Options) {
@@ -78,6 +79,20 @@ export class EntityParser {
             parseURLEncoded(req, this.options, callback);
             break;
 
+        case "text/json":
+
+            if (this.options.disableTextJSON) {
+
+                if (this.options.disableRawBinary) {
+
+                    break;
+                }
+
+                parseRawBinary(req, this.options, callback);
+
+                break;
+            }
+
         case "application/json":
 
             parseJSON(req, this.options, callback);
@@ -90,6 +105,10 @@ export class EntityParser {
             if (result = req.headers["content-type"].match(/^multipart\/form-data;\s*boundary\=(.+)$/i)) {
 
                 parseMultipartFormData(req, result[1].trim(), this.options, callback);
+
+            } else if (!this.options.disableRawBinary) {
+
+                parseRawBinary(req, this.options, callback);
             }
         }
 

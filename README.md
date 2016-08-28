@@ -12,6 +12,18 @@ Supporting following `Content-Type`:
 - application/json
 - text/json
 - x-www-form-urlencoded
+- raw-binary
+
+## Typings
+
+This project is achieved by TypeScript with Node.js.
+
+To install the DefinitelyTyped files of HTTP Entity Parser for TypeScript,
+please use following command:
+
+```
+typings install --save --global github:fenying/http-entity-parser.d.ts
+```
 
 ## Author
 

@@ -1,5 +1,5 @@
 /.gitignore
-/tsconfing.json
+/tsconfig.json
 /tslint.json
 /typings/
 /.vscode/

@@ -10,7 +10,8 @@ enum BEStatus {
     BAD_FORMAT = 2,
     READING_HEADER = 3,
     READING_FORM_DATA = 4,
-    READING_FILE_DATA = 5
+    READING_FILE_DATA = 5,
+    EXCEEDED_MAX_ENTITY_LENGTH = 6
 }
 
 /**
@@ -27,6 +28,7 @@ class DepackStack {
     public endBoundary: Buffer;
     public midBoundary: Buffer;
     public status: BEStatus;
+    public sumLength: number;
 
     public constructor(boundary: string) {
 
@@ -36,6 +38,7 @@ class DepackStack {
         this.buffer = new Buffer(HTTP_NEWLINE);
         this.form = {};
         this.tmpFiles = [];
+        this.sumLength = 0;
 
         this.midBoundary = Buffer.concat([this.boundary, HTTP_NEWLINE]);
     }
@@ -128,7 +131,7 @@ function parseWithUploadFile(req: http.IncomingMessage, boundary: string, opts: 
 
     let onDataRecv = function(chunk: Buffer) {
 
-        if (stack.status === BEStatus.BAD_FORMAT || stack.status === BEStatus.COMPLETED) {
+        if (stack.status === BEStatus.COMPLETED) {
 
             return false;
         }
@@ -136,6 +139,16 @@ function parseWithUploadFile(req: http.IncomingMessage, boundary: string, opts: 
         let looping: boolean = true;
 
         let itemBuffer: string = "";
+
+        stack.sumLength += chunk.length;
+
+        if (opts.maxDataSize && opts.maxDataSize < stack.sumLength) {
+
+            req.removeListener("data", onDataRecv);
+            stack.status = BEStatus.EXCEEDED_MAX_ENTITY_LENGTH;
+
+            return;
+        }
 
         stack.buffer = Buffer.concat([stack.buffer, chunk]);
 
@@ -146,6 +159,7 @@ function parseWithUploadFile(req: http.IncomingMessage, boundary: string, opts: 
 
                 req.removeListener("data", onDataRecv);
                 looping = false;
+                stack.buffer = undefined;
                 break;
 
             case BEStatus.IDLE:
@@ -161,6 +175,7 @@ function parseWithUploadFile(req: http.IncomingMessage, boundary: string, opts: 
                     looping = false;
 
                     stack.status = BEStatus.COMPLETED;
+                    req.removeListener("data", onDataRecv);
 
                 } else {
 
@@ -424,16 +439,10 @@ function parseWithUploadFile(req: http.IncomingMessage, boundary: string, opts: 
 
                     if (exist) {
 
-                        fs.unlink(item, function(err?: Error) {
-
-                            next(err);
-                        });
-
-                    } else {
-
-                        next();
+                        fs.unlink(item);
                     }
 
+                    next();
                 });
 
             }, function(err?: Error) {
@@ -444,20 +453,35 @@ function parseWithUploadFile(req: http.IncomingMessage, boundary: string, opts: 
 
         if (stack.status !== BEStatus.COMPLETED) {
 
+            file = undefined;
+
             stack.fd && fs.close(stack.fd);
 
-            callback && setTimeout(callback, 0, {
-                "name": "BAD-FORMAT",
-                "message": "Failed to depack the data as multipart/form-data format."
-            }, undefined, freeFiles);
+            setTimeout(freeFiles, 0);
 
-        } else {
+            if (stack.status === BEStatus.EXCEEDED_MAX_ENTITY_LENGTH) {
 
-            let formData: HTTPEntityParser.HashMap<any> = stack.form;
+                callback && setTimeout(callback, 0, {
+                    "name": "EXCEED-LENGTH",
+                    "message": "The received data length has exceeded the max length limitation."
+                }, undefined, function() {});
+
+            } else {
+
+                callback && setTimeout(callback, 0, {
+                    "name": "BAD-FORMAT",
+                    "message": "Failed to depack the data as multipart/form-data format."
+                }, undefined, function() {});
+            }
 
             stack = undefined;
 
-            callback && callback(undefined, formData, freeFiles);
+        } else {
+
+            callback && setTimeout(callback, undefined, stack.form, freeFiles);
+
+            stack = undefined;
+
         }
 
     });
@@ -470,7 +494,7 @@ function parseWithoutUploadFile(req: http.IncomingMessage, boundary: string, opt
     let file: FileInfo;
     let onDataRecv = function(chunk: Buffer) {
 
-        if (stack.status === BEStatus.BAD_FORMAT || stack.status === BEStatus.COMPLETED) {
+        if (stack.status === BEStatus.COMPLETED) {
 
             return false;
         }
@@ -478,6 +502,16 @@ function parseWithoutUploadFile(req: http.IncomingMessage, boundary: string, opt
         let looping: boolean = true;
 
         let itemBuffer: string = "";
+
+        stack.sumLength += chunk.length;
+
+        if (opts.maxDataSize && opts.maxDataSize < stack.sumLength) {
+
+            req.removeListener("data", onDataRecv);
+            stack.status = BEStatus.EXCEEDED_MAX_ENTITY_LENGTH;
+
+            return;
+        }
 
         stack.buffer = Buffer.concat([stack.buffer, chunk]);
 
@@ -488,6 +522,7 @@ function parseWithoutUploadFile(req: http.IncomingMessage, boundary: string, opt
 
                 req.removeListener("data", onDataRecv);
                 looping = false;
+                stack.buffer = undefined;
                 break;
 
             case BEStatus.IDLE:
@@ -503,6 +538,7 @@ function parseWithoutUploadFile(req: http.IncomingMessage, boundary: string, opt
                     looping = false;
 
                     stack.status = BEStatus.COMPLETED;
+                    req.removeListener("data", onDataRecv);
 
                 } else {
 
@@ -642,7 +678,6 @@ function parseWithoutUploadFile(req: http.IncomingMessage, boundary: string, opt
                                 innerLooping = false;
 
                                 continue;
-
                             }
 
                             stack.elID = httpVar["name"];
@@ -664,7 +699,6 @@ function parseWithoutUploadFile(req: http.IncomingMessage, boundary: string, opt
                                 }
 
                                 itemBuffer = "";
-
                             }
 
                             break;
@@ -698,10 +732,25 @@ function parseWithoutUploadFile(req: http.IncomingMessage, boundary: string, opt
 
         if (stack.status !== BEStatus.COMPLETED) {
 
-            callback && setTimeout(callback, 0, {
-                "name": "BAD-FORMAT",
-                "message": "Failed to depack the data as multipart/form-data format."
-            }, undefined, function() {});
+            file = undefined;
+
+            if (stack.status === BEStatus.EXCEEDED_MAX_ENTITY_LENGTH) {
+
+                callback && setTimeout(callback, 0, {
+                    "name": "EXCEED-LENGTH",
+                    "message": "The received data length has exceeded the max length limitation."
+                }, undefined, function() {});
+
+            } else {
+
+                callback && setTimeout(callback, 0, {
+                    "name": "BAD-FORMAT",
+                    "message": "Failed to depack the data as multipart/form-data format."
+                }, undefined, function() {});
+
+            }
+
+            stack = undefined;
 
         } else {
 

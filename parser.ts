@@ -25,17 +25,23 @@ export class EntityParser {
 
     protected static defaultOptions:  HTTPEntityParser.Options = {
 
-        "uploadFile": true,
+        uploadFile: true,
 
-        "tempFileRoot": "./tmp/",
+        tempFileRoot: "./tmp/",
 
-        "maxBufferSize": 1048576, // 1 MB
+        maxBufferSize: 1048576, // 1 MB,
 
-        "interruptOnExceed": true,
+        maxDataSize: undefined,
 
-        "disableTextJSON": false,
+        maxFileSize: undefined,
 
-        "disableRawBinary": false
+        maxFileNumber: undefined,
+
+        interruptOnExceed: false,
+
+        disableTextJSON: false,
+
+        disableRawBinary: false
     };
 
     public constructor(opts?:  HTTPEntityParser.Options) {

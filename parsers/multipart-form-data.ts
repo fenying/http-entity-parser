@@ -5,12 +5,12 @@ import * as fs from "fs";
 import async = require("async");
 
 enum BEStatus {
-    "IDLE" = 0,
-    "COMPLETED" = 1,
-    "BAD_FORMAT" = 2,
-    "READING_HEADER" = 3,
-    "READING_FORM_DATA" = 4,
-    "READING_FILE_DATA" = 5
+    IDLE = 0,
+    COMPLETED = 1,
+    BAD_FORMAT = 2,
+    READING_HEADER = 3,
+    READING_FORM_DATA = 4,
+    READING_FILE_DATA = 5
 }
 
 /**
@@ -114,9 +114,18 @@ function depackHeadVar(line: string): HTTPEntityParser.HashMap<any> {
 
 function parseMultipartFormData(req: http.IncomingMessage, boundary: string, opts: HTTPEntityParser.Options, callback?: HTTPEntityParser.Callback<HTTPEntityParser.HashMap<any>>) {
 
+    opts.uploadFile ?
+        parseWithUploadFile(req, boundary, opts, callback) :
+        parseWithoutUploadFile(req, boundary, opts, callback);
+
+}
+
+function parseWithUploadFile(req: http.IncomingMessage, boundary: string, opts: HTTPEntityParser.Options, callback?: HTTPEntityParser.Callback<HTTPEntityParser.HashMap<any>>) {
+
     let stack = new DepackStack(boundary);
     let pos: number;
     let file: FileInfo;
+
     let onDataRecv = function(chunk: Buffer) {
 
         if (stack.status === BEStatus.BAD_FORMAT || stack.status === BEStatus.COMPLETED) {
@@ -449,6 +458,257 @@ function parseMultipartFormData(req: http.IncomingMessage, boundary: string, opt
             stack = undefined;
 
             callback && callback(undefined, formData, freeFiles);
+        }
+
+    });
+}
+
+function parseWithoutUploadFile(req: http.IncomingMessage, boundary: string, opts: HTTPEntityParser.Options, callback?: HTTPEntityParser.Callback<HTTPEntityParser.HashMap<any>>) {
+
+    let stack = new DepackStack(boundary);
+    let pos: number;
+    let file: FileInfo;
+    let onDataRecv = function(chunk: Buffer) {
+
+        if (stack.status === BEStatus.BAD_FORMAT || stack.status === BEStatus.COMPLETED) {
+
+            return false;
+        }
+
+        let looping: boolean = true;
+
+        let itemBuffer: string = "";
+
+        stack.buffer = Buffer.concat([stack.buffer, chunk]);
+
+        do {
+
+            switch (stack.status) {
+            case BEStatus.BAD_FORMAT:
+
+                req.removeListener("data", onDataRecv);
+                looping = false;
+                break;
+
+            case BEStatus.IDLE:
+
+                if (stack.buffer.slice(0, stack.midBoundary.length).compare(stack.midBoundary) === 0) {
+
+                    stack.buffer = stack.buffer.slice(stack.midBoundary.length);
+
+                    stack.status = BEStatus.READING_HEADER;
+
+                } else if (stack.buffer.slice(0, stack.endBoundary.length).compare(stack.endBoundary) === 0) {
+
+                    looping = false;
+
+                    stack.status = BEStatus.COMPLETED;
+
+                } else {
+
+                    stack.status = BEStatus.BAD_FORMAT;
+                }
+
+                break;
+
+            case BEStatus.READING_FORM_DATA:
+
+                pos = stack.buffer.indexOf(stack.boundary);
+
+                if (pos === -1) {
+
+                    if (stack.buffer.length >= opts.maxBufferSize) {
+
+                        pos = stack.buffer.length - stack.boundary.length;
+
+                        itemBuffer += stack.buffer.slice(0, pos);
+
+                        stack.buffer = stack.buffer.slice(pos);
+
+                    }
+
+                    looping = false;
+
+                } else {
+
+                    itemBuffer += stack.buffer.slice(0, pos);
+
+                    stack.buffer = stack.buffer.slice(pos);
+
+                    if (stack.form[stack.elID] === undefined) {
+
+                        stack.form[stack.elID] = itemBuffer;
+
+                    } else {
+
+                        stack.form[stack.elID].push(itemBuffer);
+                    }
+
+                    stack.status = BEStatus.IDLE;
+
+                }
+
+                break;
+
+            case BEStatus.READING_FILE_DATA:
+
+                pos = stack.buffer.indexOf(stack.boundary);
+
+                if (pos === -1) {
+
+                    if (stack.buffer.length >= opts.maxBufferSize) {
+
+                        pos = stack.buffer.length - stack.boundary.length;
+
+                        file.size += pos;
+
+                        stack.buffer = stack.buffer.slice(pos);
+
+                    }
+
+                    looping = false;
+
+                } else {
+
+                    file.size += pos;
+
+                    file = null;
+
+                    stack.buffer = stack.buffer.slice(pos);
+
+                    stack.status = BEStatus.IDLE;
+
+                }
+
+                break;
+
+            case BEStatus.READING_HEADER:
+
+                let innerLooping: boolean = true;
+
+                while (innerLooping) {
+
+                    let line: string;
+
+                    pos = stack.buffer.indexOf(HTTP_NEWLINE);
+
+                    if (pos === -1) {
+
+                        if (stack.buffer.length > 1024) {
+
+                            stack.status = BEStatus.BAD_FORMAT;
+
+                        } else {
+
+                            looping = false;
+                        }
+
+                        break;
+                    }
+
+                    line = stack.buffer.slice(0, pos).toString("utf-8").trim();
+
+                    if (line.length === 0) {
+
+                        stack.buffer = stack.buffer.slice(2);
+
+                        stack.status = file ? BEStatus.READING_FILE_DATA : BEStatus.READING_FORM_DATA;
+
+                        innerLooping = false;
+
+                        continue;
+
+                    } else {
+
+                        let httpVar: HTTPEntityParser.HashMap<any> = depackHeadVar(line);
+
+                        if (null === httpVar) {
+
+                            stack.status = BEStatus.BAD_FORMAT;
+
+                            innerLooping = false;
+
+                            continue;
+
+                        }
+
+                        switch (httpVar["----NAME"]) {
+                        case "content-disposition":
+
+                            if (httpVar["content-disposition"].toLowerCase() !== "form-data" || !httpVar["name"]) {
+
+                                stack.status = BEStatus.BAD_FORMAT;
+
+                                innerLooping = false;
+
+                                continue;
+
+                            }
+
+                            stack.elID = httpVar["name"];
+
+                            if (httpVar["filename"]) {
+
+                                stack.form[stack.elID] = file = new FileInfo(httpVar["filename"], undefined);
+
+                            } else {
+
+                                file = null;
+
+                                if (stack.elID.substr(stack.elID.length - 2) === "[]") {
+
+                                    stack.elID = stack.elID.substr(0, stack.elID.length - 2);
+
+                                    stack.form[stack.elID] === undefined && (stack.form[stack.elID] = []);
+
+                                }
+
+                                itemBuffer = "";
+
+                            }
+
+                            break;
+
+                        case "content-type":
+
+                            if (!file) {
+
+                                break;
+                            }
+
+                            file.contentType = httpVar["content-type"];
+
+                            break;
+                        }
+
+                        stack.buffer = stack.buffer.slice(pos + 2);
+                    }
+
+                }
+
+                break;
+
+            }
+
+        } while (looping);
+
+    };
+
+    req.addListener("data", onDataRecv).addListener("end", function() {
+
+        if (stack.status !== BEStatus.COMPLETED) {
+
+            callback && setTimeout(callback, 0, {
+                "name": "BAD-FORMAT",
+                "message": "Failed to depack the data as multipart/form-data format."
+            }, undefined, function() {});
+
+        } else {
+
+            callback && setTimeout(callback, 0, undefined, stack.form, function() {});
+
+            stack = undefined;
+
         }
 
     });

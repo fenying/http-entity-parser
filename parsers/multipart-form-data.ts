@@ -405,22 +405,50 @@ function parseMultipartFormData(req: http.IncomingMessage, boundary: string, opt
 
     req.addListener("data", onDataRecv).addListener("end", function() {
 
+        let files: string[] = stack.tmpFiles;
+
+        let freeFiles = function() {
+
+            async.forEachOf(files, function(item: string, key: number, next: ErrorCallback) {
+
+                fs.exists(item, function(exist: boolean) {
+
+                    if (exist) {
+
+                        fs.unlink(item, function(err?: Error) {
+
+                            next(err);
+                        });
+
+                    } else {
+
+                        next();
+                    }
+
+                });
+
+            }, function(err?: Error) {
+
+                files = undefined;
+            });
+        };
+
         if (stack.status !== BEStatus.COMPLETED) {
 
             stack.fd && fs.close(stack.fd);
 
-            callback && callback({
+            callback && setTimeout(callback, 0, {
                 "name": "BAD-FORMAT",
                 "message": "Failed to depack the data as multipart/form-data format."
-            }, null);
+            }, undefined, freeFiles);
 
         } else {
 
             let formData: HTTPEntityParser.HashMap<any> = stack.form;
-            let files: string[] = stack.tmpFiles;
-            stack = null;
 
-            callback && callback(null, formData);
+            stack = undefined;
+
+            callback && callback(undefined, formData, freeFiles);
         }
 
     });

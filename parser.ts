@@ -93,6 +93,9 @@ export class EntityParser {
                 break;
             }
 
+            parseJSON(req, this.options, callback);
+            break;
+
         case "application/json":
 
             parseJSON(req, this.options, callback);

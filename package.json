@@ -1,6 +1,6 @@
 {
   "name": "http-entity-parser",
-  "version": "0.1.0-pre-1",
+  "version": "0.1.0-pre-2",
   "description": "A paser for HTTP request entity.",
   "main": "parser.js",
   "scripts": {
@@ -23,6 +23,7 @@
   },
   "homepage": "https://github.com/fenying/http-entity-parser#readme",
   "dependencies": {
-    "langext": "^1.2.1-pre-3"
+    "async": "^2.0.1",
+    "langext": "^1.2.1-pre-4"
   }
 }

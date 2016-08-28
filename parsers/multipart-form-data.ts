@@ -1,8 +1,8 @@
-/// <reference path="./typings/index.d.ts" />
-/// <reference path="./common.d.ts" />
+/// <reference path="../typings/index.d.ts" />
 
 import * as http from "http";
 import * as fs from "fs";
+import async = require("async");
 
 enum BEStatus {
     "IDLE" = 0,
@@ -13,13 +13,15 @@ enum BEStatus {
     "READING_FILE_DATA" = 5
 }
 
+/**
+ * The stack variables set
+ */
 class DepackStack {
 
     public buffer: Buffer;
     public tmpFiles: string[];
     public form: HTTPEntityParser.HashMap<any>;
     public elID: string;
-    public isFile: boolean;
     public fd: number;
     public boundary: Buffer;
     public endBoundary: Buffer;
@@ -34,7 +36,6 @@ class DepackStack {
         this.buffer = new Buffer(HTTP_NEWLINE);
         this.form = {};
         this.tmpFiles = [];
-        this.isFile = false;
 
         this.midBoundary = Buffer.concat([this.boundary, HTTP_NEWLINE]);
     }
@@ -67,7 +68,6 @@ function depackHeadVar(line: string): HTTPEntityParser.HashMap<any> {
     pos = line.indexOf(":");
 
     if (pos === -1) {
-        console.log(line);
         return null;
     }
 
@@ -112,13 +112,12 @@ function depackHeadVar(line: string): HTTPEntityParser.HashMap<any> {
     return rtn;
 }
 
-function parseMultipartFormData(req: http.IncomingMessage, boundary: string, opts: HTTPEntityParser.Options) {
+function parseMultipartFormData(req: http.IncomingMessage, boundary: string, opts: HTTPEntityParser.Options, callback?: HTTPEntityParser.Callback<HTTPEntityParser.HashMap<any>>) {
 
     let stack = new DepackStack(boundary);
     let pos: number;
     let file: FileInfo;
-
-    req.addListener("data", function(chunk: Buffer) {
+    let onDataRecv = function(chunk: Buffer) {
 
         if (stack.status === BEStatus.BAD_FORMAT || stack.status === BEStatus.COMPLETED) {
 
@@ -136,12 +135,11 @@ function parseMultipartFormData(req: http.IncomingMessage, boundary: string, opt
             switch (stack.status) {
             case BEStatus.BAD_FORMAT:
 
+                req.removeListener("data", onDataRecv);
                 looping = false;
                 break;
 
             case BEStatus.IDLE:
-
-                stack.isFile = false;
 
                 if (stack.buffer.slice(0, stack.midBoundary.length).compare(stack.midBoundary) === 0) {
 
@@ -224,6 +222,9 @@ function parseMultipartFormData(req: http.IncomingMessage, boundary: string, opt
 
                                 stack.fd = null;
 
+                                file = null;
+                                stack.tmpFiles.pop();
+
                             }
 
                         } else {
@@ -253,6 +254,9 @@ function parseMultipartFormData(req: http.IncomingMessage, boundary: string, opt
 
                             stack.fd = null;
 
+                            file = null;
+                            stack.tmpFiles.pop();
+
                         }
 
                     } else {
@@ -264,6 +268,8 @@ function parseMultipartFormData(req: http.IncomingMessage, boundary: string, opt
                     }
 
                     stack.fd = null;
+
+                    file = null;
 
                     stack.buffer = stack.buffer.slice(pos);
 
@@ -303,11 +309,11 @@ function parseMultipartFormData(req: http.IncomingMessage, boundary: string, opt
 
                         stack.buffer = stack.buffer.slice(2);
 
-                        stack.status = stack.isFile ? BEStatus.READING_FILE_DATA : BEStatus.READING_FORM_DATA;
+                        stack.status = file ? BEStatus.READING_FILE_DATA : BEStatus.READING_FORM_DATA;
 
                         innerLooping = false;
 
-                        if (stack.isFile) {
+                        if (file) {
 
                             stack.fd = fs.openSync(file.tempPath, "w");
 
@@ -354,11 +360,9 @@ function parseMultipartFormData(req: http.IncomingMessage, boundary: string, opt
 
                                 stack.form[stack.elID] = file = new FileInfo(httpVar["filename"], tempFile);
 
-                                stack.isFile = true;
-
                             } else {
 
-                                stack.isFile = false;
+                                file = null;
 
                                 if (stack.elID.substr(stack.elID.length - 2) === "[]") {
 
@@ -376,7 +380,7 @@ function parseMultipartFormData(req: http.IncomingMessage, boundary: string, opt
 
                         case "content-type":
 
-                            if (!stack.isFile) {
+                            if (!file) {
 
                                 break;
                             }
@@ -397,13 +401,15 @@ function parseMultipartFormData(req: http.IncomingMessage, boundary: string, opt
 
         } while (looping);
 
-    }).addListener("end", function() {
+    };
+
+    req.addListener("data", onDataRecv).addListener("end", function() {
 
         if (stack.status !== BEStatus.COMPLETED) {
 
             stack.fd && fs.close(stack.fd);
 
-            opts.callback && opts.callback({
+            callback && callback({
                 "name": "BAD-FORMAT",
                 "message": "Failed to depack the data as multipart/form-data format."
             }, null);
@@ -411,9 +417,10 @@ function parseMultipartFormData(req: http.IncomingMessage, boundary: string, opt
         } else {
 
             let formData: HTTPEntityParser.HashMap<any> = stack.form;
-            stack.buffer = null;
+            let files: string[] = stack.tmpFiles;
+            stack = null;
 
-            opts.callback && opts.callback(null, formData);
+            callback && callback(null, formData);
         }
 
     });

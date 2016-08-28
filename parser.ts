@@ -2,7 +2,9 @@
 
 import * as http from "http";
 import * as fs from "fs";
-import parseMultipartFormData = require("./multipart-form-data");
+import parseMultipartFormData = require("./parsers/multipart-form-data");
+import parseJSON = require("./parsers/application-json");
+import parseURLEncoded = require("./parsers/x-www-form-urlencoded");
 
 enum BEStatus {
     "IDLE" = 0,
@@ -13,102 +15,14 @@ enum BEStatus {
     "READING_FILE_DATA" = 5
 }
 
-export type DepackFailMethod = "ignore" | "shutdown";
+/**
+ * The parser to decode HTTP Entity Data.
+ */
+export class EntityParser {
 
-export interface Options {
+    protected options: HTTPEntityParser.Options;
 
-    uploadFile?: boolean;
-
-    tempFileRoot?: string;
-
-    maxFileSize?: number;
-
-    maxFileNumber?: number;
-
-    maxDataSize?: number;
-
-    maxBufferSize?: number;
-
-    /**
-     * Interrupt the connection on data exceeded.
-     */
-    interruptOnExceed?: boolean;
-
-    callback?: (err: Error, formData: HTTPEntityParser.HashMap<any>) => void;
-}
-
-class Parser {
-
-    public buffer: Buffer;
-    public tmpFiles: string[];
-    public form: HTTPEntityParser.HashMap<any>;
-    public elID: string;
-    public depacker: Depacker;
-    public isFile: boolean;
-    public fd: number;
-    public boundary: Buffer;
-    public endBoundary: Buffer;
-    public midBoundary: Buffer;
-    public status: BEStatus;
-    /*
-    protected _status: BEStatus;
-
-    public get status(): BEStatus {
-
-        return this._status;
-    }
-
-    public set status(newV: BEStatus) {
-        console.log("new status: ", BEStatus[newV]);
-        this._status = newV;
-    }*/
-
-    public constructor(boundary: string, depacker: Depacker) {
-
-        this.boundary = new Buffer(HTTP_NEWLINE + "--" + boundary);
-        this.depacker = depacker;
-        this.endBoundary = new Buffer(this.boundary + "--" + HTTP_NEWLINE);
-        this.status = BEStatus.IDLE;
-        this.buffer = new Buffer(HTTP_NEWLINE);
-        this.form = {};
-        this.tmpFiles = [];
-        this.isFile = false;
-
-        this.midBoundary = Buffer.concat([this.boundary, HTTP_NEWLINE]);
-    }
-
-}
-
-export interface TempFileInfo {
-
-    "name": string;
-    "tempPath"?: string;
-    "contentType": string;
-    "size": number;
-}
-
-class FileInfo implements TempFileInfo {
-
-    public "name": string;
-    public "tempPath": string;
-    public "contentType": string;
-    public "size": number;
-
-    public constructor(fName: string, tmpPath: string) {
-
-        this.name = fName;
-        this.tempPath = tmpPath;
-        this.size = 0;
-    }
-}
-
-const HTTP_NEWLINE: Buffer = new Buffer("\r\n");
-
-export class Depacker {
-
-    protected options: Options;
-
-    protected static defaultOptions: Options = {
+    protected static defaultOptions:  HTTPEntityParser.Options = {
 
         "uploadFile": true,
 
@@ -121,18 +35,15 @@ export class Depacker {
         "maxBufferSize": 1048576, // 1 MB
 
         "interruptOnExceed": true,
-
-        "callback": null
-
     };
 
-    public constructor(opts?: Options) {
+    public constructor(opts?:  HTTPEntityParser.Options) {
 
         this.options = {};
 
         if (opts) {
 
-            for (let key in Depacker.defaultOptions) {
+            for (let key in EntityParser.defaultOptions) {
 
                 if (opts[key] !== undefined) {
 
@@ -140,20 +51,21 @@ export class Depacker {
 
                 } else {
 
-                    this.options[key] = Depacker.defaultOptions[key];
+                    this.options[key] = EntityParser.defaultOptions[key];
                 }
             }
+
         } else {
 
-            for (let key in Depacker.defaultOptions) {
+            for (let key in EntityParser.defaultOptions) {
 
-                this.options[key] = Depacker.defaultOptions[key];
+                this.options[key] = EntityParser.defaultOptions[key];
             }
         }
 
     }
 
-    parse(req: http.IncomingMessage) {
+    parse(req: http.IncomingMessage, callback?: HTTPEntityParser.Callback<any>) {
 
         if (req.method !== "POST" || !req.headers["content-type"]) {
             return;
@@ -161,8 +73,14 @@ export class Depacker {
 
         switch (req.headers["content-type"].toLowerCase()) {
 
+        case "x-www-form-urlencoded":
+
+            parseURLEncoded(req, this.options, callback);
+            break;
+
         case "application/json":
 
+            parseJSON(req, this.options, callback);
             break;
 
         default:
@@ -171,7 +89,7 @@ export class Depacker {
 
             if (result = req.headers["content-type"].match(/^multipart\/form-data;\s*boundary\=(.+)$/i)) {
 
-                parseMultipartFormData(req, result[1].trim(), this.options);
+                parseMultipartFormData(req, result[1].trim(), this.options, callback);
             }
         }
 

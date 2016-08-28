@@ -1,7 +1,9 @@
 {
   "dependencies": {},
   "globalDependencies": {
+    "async": "registry:dt/async#2.0.1+20160804113311",
     "langext": "github:fenying/langext.d.ts",
+    "http-entity-parser": "github:fenying/http-entity-parser.d.ts",
     "node": "registry:dt/node#6.0.0+20160826120425"
   }
 }

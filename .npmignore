@@ -1,0 +1,7 @@
+/.gitignore
+/tsconfing.json
+/tslint.json
+/typings/
+/.vscode/
+/.git/
+/node_modules/
